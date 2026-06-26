@@ -228,15 +228,16 @@ export default function App() {
         {/* Summary boxes */}
         {(data.cards.length > 0 || otherList.length > 0) && (
           <div style={{margin:"0 16px 16px",display:"flex",flexDirection:"column",gap:8}}>
-            {/* row 1: วงเงิน + ยอดบัตร */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {/* row 1: วงเงิน + ยอดบัตร + ค้างจ่าย */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
               {[
                 {label:"วงเงินเหลือรวม", val:fmt(totalRemain), color:"#34d399"},
                 {label:"ยอดรวมบัตรเดือนนี้", val:fmt(totalCardBill), color:"#fb923c"},
+                {label:"ค้างจ่ายบัตรรวม", val:fmt(Math.max(0, totalCardBill - totalPaid)), color:totalCardBill>totalPaid?"#f87171":S.muted},
               ].map(s=>(
-                <div key={s.label} style={{background:S.surface,borderRadius:14,padding:"12px 10px",border:"1px solid "+S.border,textAlign:"center"}}>
-                  <p style={{fontSize:10,color:S.muted,marginBottom:4,lineHeight:1.3}}>{s.label}</p>
-                  <p style={{fontSize:14,fontWeight:700,color:s.color}}>{s.val}</p>
+                <div key={s.label} style={{background:S.surface,borderRadius:14,padding:"12px 8px",border:"1px solid "+S.border,textAlign:"center"}}>
+                  <p style={{fontSize:9,color:S.muted,marginBottom:4,lineHeight:1.3}}>{s.label}</p>
+                  <p style={{fontSize:13,fontWeight:700,color:s.color}}>{s.val}</p>
                 </div>
               ))}
             </div>
