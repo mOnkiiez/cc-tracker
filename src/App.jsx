@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
+import { loadFromCloud, saveToCloud } from "./supabase"
 
 const STORAGE_KEY = "cc-tracker-v1"
 const MONTHS_TH = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."]
@@ -16,14 +17,11 @@ function fmt(n) {
 }
 function todayStr() { return new Date().toISOString().slice(0,10) }
 
-function loadData() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw)
-  } catch {}
+function loadLocal() {
+  try { const r = localStorage.getItem(STORAGE_KEY); if (r) return JSON.parse(r) } catch {}
   return { cards: [], months: {} }
 }
-function saveData(d) {
+function saveLocal(d) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)) } catch {}
 }
 
@@ -35,11 +33,7 @@ function setCardMonth(data, cardId, mk, val) {
   return { ...data, months: { ...data.months, [mk]: { ...getMonth(data, mk), [cardId]: val } } }
 }
 
-// styles
-const S = {
-  bg: "#0f172a", surface: "#1e293b", border: "#334155",
-  text: "#e2e8f0", muted: "#64748b", accent: "#7c6af7"
-}
+const S = { bg:"#0f172a", surface:"#1e293b", border:"#334155", text:"#e2e8f0", muted:"#64748b", accent:"#7c6af7" }
 
 function NumInput({ label, value, onChange, placeholder }) {
   return (
@@ -67,27 +61,74 @@ function ConfirmModal({ title, desc, onConfirm, onCancel }) {
   )
 }
 
+function SyncBadge({ status }) {
+  const map = {
+    syncing: { color:"#fbbf24", label:"กำลังซิงก์..." },
+    synced:  { color:"#34d399", label:"ซิงก์แล้ว ✓" },
+    offline: { color:"#64748b", label:"offline" },
+    error:   { color:"#f87171", label:"sync ไม่ได้" },
+  }
+  const s = map[status] || map.offline
+  return (
+    <span style={{fontSize:10,color:s.color,fontWeight:500}}>{s.label}</span>
+  )
+}
+
 export default function App() {
-  const [data, setData] = useState(() => loadData())
+  const [data, setData] = useState(null)
   const [mk, setMk] = useState(toMonthKey())
   const [view, setView] = useState("home")
   const [activeCard, setActiveCard] = useState(null)
   const [editBill, setEditBill] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
+  const [syncStatus, setSyncStatus] = useState("offline")
+  const saveTimer = useRef(null)
 
   const [cardForm, setCardForm] = useState({ name:"", limit:"", color:COLORS[0] })
   const [billForm, setBillForm] = useState({ bill:"", minPay:"", paid:"", remain:"" })
   const [itemForm, setItemForm] = useState({ label:"", amount:"", date:todayStr() })
 
-  const mutate = (newData) => { setData(newData); saveData(newData) }
+  // Load: cloud first, fallback localStorage
+  useEffect(() => {
+    const init = async () => {
+      setSyncStatus("syncing")
+      const cloud = await loadFromCloud()
+      if (cloud && cloud.cards) {
+        setData(cloud)
+        saveLocal(cloud)
+        setSyncStatus("synced")
+      } else {
+        const local = loadLocal()
+        setData(local)
+        setSyncStatus(cloud === null ? "offline" : "synced")
+      }
+    }
+    init()
+  }, [])
+
+  // Debounced save: local immediately, cloud after 1.5s
+  const mutate = (newData) => {
+    setData(newData)
+    saveLocal(newData)
+    setSyncStatus("syncing")
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(async () => {
+      try {
+        await saveToCloud(newData)
+        setSyncStatus("synced")
+      } catch {
+        setSyncStatus("error")
+      }
+    }, 1500)
+  }
 
   const shiftMonth = (dir) => {
     const [y,m] = mk.split("-").map(Number)
     setMk(toMonthKey(new Date(y, m-1+dir, 1)))
   }
 
-  // totals
   const monthTotals = () => {
+    if (!data) return { totalRemain:0, totalBill:0, totalPaid:0 }
     let totalRemain=0, totalBill=0, totalPaid=0
     data.cards.forEach(c => {
       const cm = getCardMonth(data, c.id, mk)
@@ -144,6 +185,14 @@ export default function App() {
     setView("card")
   }
 
+  if (!data) return (
+    <div style={{background:S.bg,color:S.muted,height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexDirection:"column",gap:12}}>
+      <div style={{width:32,height:32,border:"3px solid #334155",borderTopColor:S.accent,borderRadius:"50%",animation:"spin 1s linear infinite"}} />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <p>กำลังโหลด...</p>
+    </div>
+  )
+
   // ── HOME ────────────────────────────────────────────────
   if (view === "home") {
     const { totalRemain, totalBill, totalPaid } = monthTotals()
@@ -151,13 +200,14 @@ export default function App() {
     return (
       <div style={{background:S.bg,minHeight:"100vh",color:S.text,paddingBottom:80}}>
         <div style={{padding:"48px 18px 16px"}}>
-          <p style={{fontSize:10,color:S.muted,letterSpacing:3,textTransform:"uppercase",marginBottom:6}}>บัตรเครดิต</p>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <button onClick={()=>shiftMonth(-1)} style={{background:S.surface,border:"1px solid "+S.border,color:S.text,borderRadius:10,width:32,height:32,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
-              <span style={{fontSize:17,fontWeight:700}}>{labelMonth(mk)}</span>
-              <button onClick={()=>shiftMonth(1)} style={{background:S.surface,border:"1px solid "+S.border,color:S.text,borderRadius:10,width:32,height:32,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
-            </div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+            <p style={{fontSize:10,color:S.muted,letterSpacing:3,textTransform:"uppercase",margin:0}}>บัตรเครดิต</p>
+            <SyncBadge status={syncStatus} />
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <button onClick={()=>shiftMonth(-1)} style={{background:S.surface,border:"1px solid "+S.border,color:S.text,borderRadius:10,width:32,height:32,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
+            <span style={{fontSize:17,fontWeight:700}}>{labelMonth(mk)}</span>
+            <button onClick={()=>shiftMonth(1)} style={{background:S.surface,border:"1px solid "+S.border,color:S.text,borderRadius:10,width:32,height:32,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
           </div>
         </div>
 
@@ -280,7 +330,10 @@ export default function App() {
         <div style={{padding:"48px 18px 16px"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
             <button onClick={()=>setView("home")} style={{background:"none",border:"none",color:S.muted,fontSize:13,cursor:"pointer",padding:0}}>← กลับ</button>
-            <button onClick={()=>setConfirmDel(true)} style={{background:"none",border:"none",color:"#f87171",fontSize:12,cursor:"pointer",padding:0}}>ลบบัตร</button>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <SyncBadge status={syncStatus} />
+              <button onClick={()=>setConfirmDel(true)} style={{background:"none",border:"none",color:"#f87171",fontSize:12,cursor:"pointer",padding:0}}>ลบบัตร</button>
+            </div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:2}}>
             <div style={{width:12,height:12,borderRadius:"50%",background:card.color}} />
@@ -290,8 +343,6 @@ export default function App() {
         </div>
 
         <div style={{padding:"0 16px",display:"flex",flexDirection:"column",gap:10}}>
-
-          {/* วงเงินคงเหลือ */}
           <div style={{background:S.surface,borderRadius:18,padding:18,border:"1px solid "+S.border}}>
             <p style={{fontSize:10,color:S.muted,marginBottom:4}}>วงเงินคงเหลือ</p>
             <div style={{display:"flex",alignItems:"baseline",gap:8}}>
@@ -300,19 +351,14 @@ export default function App() {
             </div>
           </div>
 
-          {/* ยอดและการจ่าย */}
           <div style={{background:S.surface,borderRadius:18,padding:18,border:"1px solid "+S.border}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
               <p style={{fontSize:13,fontWeight:600,margin:0}}>ยอดเดือนนี้</p>
-              <button onClick={()=>{
-                  setBillForm({bill:cm.bill||"",minPay:cm.minPay||"",paid:cm.paid||"",remain:card.remain||""})
-                  setEditBill(!editBill)
-                }}
+              <button onClick={()=>{ setBillForm({bill:cm.bill||"",minPay:cm.minPay||"",paid:cm.paid||"",remain:card.remain||""}); setEditBill(!editBill) }}
                 style={{background:S.accent+"22",color:S.accent,border:"none",borderRadius:8,padding:"4px 10px",fontSize:11,cursor:"pointer"}}>
                 {editBill?"ปิด":"✏️ แก้ไข"}
               </button>
             </div>
-
             {editBill ? (
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 <NumInput label="ยอดแจ้งหนี้จากธนาคาร" value={billForm.bill} onChange={v=>setBillForm({...billForm,bill:v})} />
@@ -343,7 +389,6 @@ export default function App() {
             )}
           </div>
 
-          {/* รายการเพิ่มเติม */}
           <div style={{background:S.surface,borderRadius:18,padding:18,border:"1px solid "+S.border}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
               <p style={{fontSize:13,fontWeight:600,margin:0}}>รายการเพิ่มเติม</p>
@@ -370,7 +415,6 @@ export default function App() {
               ))}
             </div>
           </div>
-
         </div>
       </div>
     )
