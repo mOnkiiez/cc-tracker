@@ -127,7 +127,7 @@ export default function App() {
   }
 
   const monthTotals = () => {
-    if (!data) return { totalRemain:0, totalCardBill:0, totalPaid:0, totalOther:0 }
+    if (!data) return { totalRemain:0, totalCardBill:0, totalPaid:0, totalOther:0, totalCumulativeUnpaid:0 }
     let totalRemain=0, totalCardBill=0, totalPaid=0
     data.cards.forEach(c => {
       const cm = getCardMonth(data, c.id, mk)
@@ -137,7 +137,20 @@ export default function App() {
       totalPaid += Number(cm.paid||0)
     })
     const totalOther = getOtherExpenses(data, mk).reduce((s,e)=>s+Number(e.amount),0)
-    return { totalRemain, totalCardBill, totalPaid, totalOther }
+
+    // ยอดค้างสะสมทุกเดือน (เฉพาะบัตร) ที่ยังไม่ได้จ่าย
+    let totalCumulativeUnpaid = 0
+    Object.keys(data.months || {}).forEach(monthKey => {
+      data.cards.forEach(c => {
+        const cm = getCardMonth(data, c.id, monthKey)
+        const extra = (cm.items||[]).reduce((s,i)=>s+Number(i.amount),0)
+        const bill = Number(cm.bill||0) + extra
+        const paid = Number(cm.paid||0)
+        totalCumulativeUnpaid += Math.max(0, bill - paid)
+      })
+    })
+
+    return { totalRemain, totalCardBill, totalPaid, totalOther, totalCumulativeUnpaid }
   }
 
   const doAddCard = () => {
@@ -208,7 +221,7 @@ export default function App() {
 
   // ── HOME ─────────────────────────────────────────────────
   if (view === "home") {
-    const { totalRemain, totalCardBill, totalPaid, totalOther } = monthTotals()
+    const { totalRemain, totalCardBill, totalPaid, totalOther, totalCumulativeUnpaid } = monthTotals()
     const totalAllPaid = totalPaid + totalOther
     const otherList = getOtherExpenses(data, mk)
 
@@ -233,7 +246,7 @@ export default function App() {
               {[
                 {label:"วงเงินเหลือรวม", val:fmt(totalRemain), color:"#34d399"},
                 {label:"ยอดรวมบัตรเดือนนี้", val:fmt(totalCardBill), color:"#fb923c"},
-                {label:"ค้างจ่ายบัตรรวม", val:fmt(Math.max(0, totalCardBill - totalPaid)), color:totalCardBill>totalPaid?"#f87171":S.muted},
+                {label:"ค้างจ่ายบัตรเดือนนี้", val:fmt(Math.max(0, totalCardBill - totalPaid)), color:totalCardBill>totalPaid?"#f87171":S.muted},
               ].map(s=>(
                 <div key={s.label} style={{background:S.surface,borderRadius:14,padding:"12px 8px",border:"1px solid "+S.border,textAlign:"center"}}>
                   <p style={{fontSize:9,color:S.muted,marginBottom:4,lineHeight:1.3}}>{s.label}</p>
@@ -241,13 +254,18 @@ export default function App() {
                 </div>
               ))}
             </div>
-            {/* row 2: ยอดรวมที่จ่ายทั้งหมด full width */}
-            <div style={{background:"#1a2744",borderRadius:14,padding:"14px 16px",border:"1px solid #2d3f6b",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <div>
-                <p style={{fontSize:11,color:"#93c5fd",marginBottom:3}}>ยอดรวมที่จ่ายทั้งหมด</p>
-                <p style={{fontSize:10,color:S.muted}}>จ่ายบัตร {fmt(totalPaid)} + อื่นๆ {fmt(totalOther)}</p>
+            {/* row 2: ค้างจ่ายทั้งหมด (สะสม) + ยอดรวมที่จ่าย */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <div style={{background:"#2d1a1a",borderRadius:14,padding:"12px 10px",border:"1px solid #5b2a2a",textAlign:"center"}}>
+                <p style={{fontSize:9,color:"#fca5a5",marginBottom:3,lineHeight:1.3}}>ค้างจ่ายทั้งหมด</p>
+                <p style={{fontSize:9,color:"#64748b",marginBottom:4}}>(สะสมทุกเดือน)</p>
+                <p style={{fontSize:15,fontWeight:800,color:totalCumulativeUnpaid>0?"#f87171":"#64748b"}}>{fmt(totalCumulativeUnpaid)}</p>
               </div>
-              <p style={{fontSize:18,fontWeight:800,color:"#60a5fa"}}>{fmt(totalAllPaid)}</p>
+              <div style={{background:"#1a2744",borderRadius:14,padding:"12px 10px",border:"1px solid #2d3f6b",textAlign:"center"}}>
+                <p style={{fontSize:9,color:"#93c5fd",marginBottom:3,lineHeight:1.3}}>ยอดรวมที่จ่ายทั้งหมด</p>
+                <p style={{fontSize:9,color:"#64748b",marginBottom:4}}>บัตร {fmt(totalPaid)} + อื่นๆ {fmt(totalOther)}</p>
+                <p style={{fontSize:15,fontWeight:800,color:"#60a5fa"}}>{fmt(totalAllPaid)}</p>
+              </div>
             </div>
           </div>
         )}
